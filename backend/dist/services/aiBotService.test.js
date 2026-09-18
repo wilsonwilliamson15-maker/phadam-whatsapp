@@ -58,6 +58,9 @@ const aiBotService_1 = require("./aiBotService");
 });
 (0, node_test_1.default)('guides patients who request a human', () => {
     strict_1.default.equal((0, aiBotService_1.isHumanSupportRequest)('Can I talk to a human?'), true);
+    strict_1.default.equal((0, aiBotService_1.isHumanSupportRequest)('I need an agent'), true);
+    strict_1.default.equal((0, aiBotService_1.isHumanSupportRequest)('Please connect me to a doctor'), true);
+    strict_1.default.equal((0, aiBotService_1.isHumanSupportRequest)('I need staff help'), true);
     strict_1.default.match((0, aiBotService_1.generateBotReply)({
         patientName: 'Mary',
         message: 'Can I talk to a human?',
@@ -75,6 +78,98 @@ const aiBotService_1 = require("./aiBotService");
     strict_1.default.match(reply, /Mary/i);
     strict_1.default.match(reply, /appointment|service|staff/i);
 });
+(0, node_test_1.default)('starts every conversation by asking for the patient name', () => {
+    const reply = (0, aiBotService_1.generateBotReply)({
+        patientName: null,
+        message: 'book appointment tomorrow at 9am in maternity',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(reply, /what is your name/i);
+    strict_1.default.doesNotMatch(reply, /tomorrow at 9am/i);
+});
+(0, node_test_1.default)('understands affirmative replies like okay and thanks in appointment flow', () => {
+    const step1 = (0, aiBotService_1.generateBotReply)({
+        patientId: 'affirm-1',
+        patientName: null,
+        message: 'my name is Mary',
+    });
+    strict_1.default.match(step1, /How can I help you today|welcome/i);
+    const step2 = (0, aiBotService_1.generateBotReply)({
+        patientId: 'affirm-1',
+        patientName: null,
+        message: 'book appointment today at 9am in maternity',
+    });
+    strict_1.default.match(step2, /appointment request|correct|confirm/i);
+    const step3 = (0, aiBotService_1.generateBotReply)({
+        patientId: 'affirm-1',
+        patientName: null,
+        message: 'thanks',
+    });
+    strict_1.default.match(step3, /Appointment Confirmed|booking reference/i);
+});
+(0, node_test_1.default)('answers common price and rebooking questions naturally', () => {
+    const priceReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'what is the consultation fee for obstetrics and gynecology?',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(priceReply, /KSh 1,000/i);
+    const rescheduleReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'can i do it tomorrow at 9am in maternity?',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(rescheduleReply, /appointment request|correct|confirm|what time/i);
+    const cancelReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'I want to cancel my appointment',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(cancelReply, /cancel|cleared|No problem/i);
+});
+(0, node_test_1.default)('handles appointment history and reschedule keywords with patient-friendly wording', () => {
+    const historyReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'show my appointment history',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(historyReply, /history|appointment/i);
+    const rescheduleReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'reschedule my appointment to tomorrow at 3pm',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(rescheduleReply, /reschedule|appointment|tomorrow|3pm|available/i);
+});
+(0, node_test_1.default)('handles real-world patient phrases like confirmation, doctor availability, and late arrival', () => {
+    const confirmReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'can you confirm my appointment?',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(confirmReply, /appointment|confirm|reference|date|time/i);
+    const availabilityReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'is there a doctor available now?',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(availabilityReply, /doctor|available|appointment|book|call/i);
+    const lateReply = (0, aiBotService_1.generateBotReply)({
+        patientName: 'Mary',
+        message: 'i am running late',
+        isReturning: false,
+        lastInteractionHours: 0,
+    });
+    strict_1.default.match(lateReply, /late|appointment|contact|staff|call/i);
+});
 (0, node_test_1.default)('formats Kenya greeting periods', () => {
     strict_1.default.equal((0, aiBotService_1.getKenyaGreeting)(new Date('2026-09-15T08:00:00.000Z')), 'Good morning');
     strict_1.default.equal((0, aiBotService_1.getKenyaGreeting)(new Date('2026-09-15T12:00:00.000Z')), 'Good afternoon');
@@ -90,10 +185,22 @@ const aiBotService_1 = require("./aiBotService");
     strict_1.default.equal(booking.department, 'Maternity');
     strict_1.default.equal(booking.time, '09:00 AM');
 });
+(0, node_test_1.default)('parses interactive menu time values like 09 00 am', () => {
+    const booking = (0, aiBotService_1.parseAppointmentRequest)('tomorrow 09 00 am in maternity');
+    strict_1.default.equal(booking.department, 'Maternity');
+    strict_1.default.equal(booking.time, '09:00 AM');
+    strict_1.default.equal(booking.ready, true);
+});
 (0, node_test_1.default)('does not confuse appointments with ENT', () => {
     const booking = (0, aiBotService_1.parseAppointmentRequest)('I need appointments');
     strict_1.default.equal(booking.department, undefined);
     strict_1.default.equal(booking.ready, false);
+});
+(0, node_test_1.default)('recognizes common gynecology typos and returns the exact consultation fee', () => {
+    const booking = (0, aiBotService_1.parseAppointmentRequest)('Obstetrics and Gynecolog appointment today at 11:00 AM');
+    strict_1.default.equal(booking.department, 'Obstetrics and Gynecology');
+    strict_1.default.equal(booking.time, '11:00 AM');
+    strict_1.default.equal((0, aiBotService_1.getServicePrice)(booking.department), 'KSh 1,000');
 });
 (0, node_test_1.default)('asks for missing booking details', () => {
     const prompt = (0, aiBotService_1.generateAppointmentCollectionPrompt)('Mary', {
@@ -102,4 +209,13 @@ const aiBotService_1 = require("./aiBotService");
     });
     strict_1.default.match(prompt, /department/i);
     strict_1.default.match(prompt, /date|time/i);
+});
+(0, node_test_1.default)('keeps consultation pricing wording exact and human-friendly', () => {
+    const prompt = (0, aiBotService_1.generateAppointmentCollectionPrompt)('Mary', {
+        department: 'Obstetrics and Gynecology',
+        date: 'today',
+    });
+    strict_1.default.match(prompt, /KSh 1,000/i);
+    strict_1.default.doesNotMatch(prompt, /KSh 1,000 \+ KSh 1,000 consultation/i);
+    strict_1.default.match(prompt, /what time/i);
 });

@@ -7,5 +7,8 @@ const router = (0, express_1.Router)();
 router.use(auth_1.requireAuth);
 router.get('/appointments', dashboardController_1.getAppointments);
 router.patch('/appointments/:appointmentId/status', dashboardController_1.updateAppointmentStatus);
+router.post('/appointments/:appointmentId/follow-ups', dashboardController_1.createAppointmentFollowUp);
+router.post('/patients-with-appointment', dashboardController_1.createPatientWithAppointment);
+router.get('/reminders', dashboardController_1.getAppointmentReminders);
 router.get('/patients', dashboardController_1.getPatients);
 exports.default = router;

@@ -1,13 +1,4 @@
 "use strict";
-// src/data/hospitalKnowledge.ts
-//
-// NOTE ON SCOPE: This file is a KNOWLEDGE BASE, not a chat/reply engine.
-// It stores factual hospital data and exposes lookup/search helpers that
-// return formatted text a calling layer (bot, webhook, UI, etc.) can send.
-// It must never invent facts (doctor names, exact hours, undisclosed
-// prices, etc.) that were not supplied in `hospitalKnowledge` below.
-// Anywhere information is genuinely unknown, the helpers say so explicitly
-// instead of guessing, and defer to contacting the hospital directly.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hospitalKnowledge = void 0;
 exports.searchKnowledgeBase = searchKnowledgeBase;
@@ -17,6 +8,7 @@ exports.hospitalKnowledge = {
     legalName: 'The Phadam Hospital',
     motto: 'Your Health, Our Pride',
     founded: 'December 2016',
+    consultationFee: 'KSh 1,000',
     description: 'Phadam Hospital is a modern healthcare facility providing affordable, patient-centered medical services for adults and children in Nairobi and its environs. The hospital combines qualified healthcare professionals, modern medical technology, advanced infrastructure, and compassionate nursing care.',
     mission: 'To improve the health of the community we serve through extraordinary healthcare, quality services, compassionate treatment, and care that goes beyond expectations.',
     scope: 'Phadam Hospital is committed to delivering safe, accessible, and consistently high-quality healthcare through skilled doctors, nurses, specialists, modern facilities, patient-centered care, ethical practice, continuous learning, and improved clinical outcomes.',
@@ -207,9 +199,10 @@ exports.hospitalKnowledge = {
     bookingNotes: [
         'Prices should be confirmed with the hospital before treatment or admission.',
         'Final procedure charges may depend on the surgeon, anesthesia, medicines, investigations, implants, admission duration, and emergency status.',
+        'Standard outpatient consultation fee is KSh 1,000. This covers a routine doctor visit only — tests, procedures, medication, and admission are charged separately.',
         'Insurance members should confirm coverage and preauthorization requirements before a procedure.',
         'For emergencies, contact the nearest Phadam Hospital branch directly or use emergency services.',
-        'Doctor names, consultation schedules, and exact clinic hours were not provided in the supplied hospital information and should not be invented.',
+        'Doctor names, individual consultation schedules, and exact clinic hours were not provided in the supplied hospital information and should not be invented.',
     ],
     // Explicit registry of things patients commonly ask that this knowledge
     // base deliberately does NOT answer with specifics, because that detail
@@ -219,11 +212,16 @@ exports.hospitalKnowledge = {
         'exact opening/visiting hours for each branch',
         'named doctors, specialists, or their individual schedules',
         'online or app-based appointment booking links',
-        'non-surgical service fees (e.g. consultation, lab test, pharmacy item prices)',
+        'itemized non-surgical service fees (e.g. individual lab test prices, pharmacy item prices) beyond the standard consultation fee',
         'bed/ward availability in real time',
         'which specific branch offers which specialist clinic',
     ],
 };
+// Departments where a flat "consultation fee" framing doesn't really apply
+// (e.g. you don't "consult" the pharmacy — you fill a prescription there).
+// These are excluded from the consultation-fee line in department/service
+// responses so we don't imply a fee structure that doesn't make sense.
+const NON_CONSULTATION_DEPARTMENTS = new Set(['Pharmacy', 'Laboratory']);
 // ---------------------------------------------------------------------------
 // Text normalization & query understanding
 // ---------------------------------------------------------------------------
@@ -269,6 +267,26 @@ const STOP_WORDS = new Set([
     'with',
     'you',
     'your',
+    // Generic descriptor words that, on their own, don't identify a specific
+    // service/procedure/department. Without excluding these, a broad request
+    // like "get me a list of all your services" would incorrectly match only
+    // the handful of services whose *name* literally contains the word
+    // "services" (e.g. "Maternity services", "Ambulance services"), instead
+    // of being recognized as a request for the full list.
+    'service',
+    'services',
+    'treatment',
+    'treatments',
+    'offer',
+    'offers',
+    'offering',
+    'facility',
+    'facilities',
+    'list',
+    'all',
+    'full',
+    'complete',
+    'every',
 ]);
 function normalizeText(value) {
     return value
@@ -377,7 +395,8 @@ function formatServices() {
         '',
         ...exports.hospitalKnowledge.services.map((service) => `• ${service}`),
         '',
-        'Ask about any specific service (e.g. "do you have physiotherapy?") for a direct confirmation.',
+        `Standard outpatient consultation fee: *${exports.hospitalKnowledge.consultationFee}*.`,
+        'Ask about any specific service (e.g. "do you have physiotherapy?"), reply "price list" for our full surgical procedure price list, or "book appointment" to schedule a visit.',
     ].join('\n');
 }
 function formatInsuranceList() {
@@ -390,10 +409,13 @@ function formatInsuranceList() {
     ].join('\n');
 }
 function formatInsuranceConfirmation(matches) {
+    const branchList = exports.hospitalKnowledge.locations
+        .map((location) => `${location.branch} (${location.address})`)
+        .join('; ');
     return [
         '🛡️ *Insurance Confirmation*',
         '',
-        `Yes — Phadam Hospital works with: ${matches.join(', ')}.`,
+        `Yes — Phadam Hospital works with: ${matches.join(', ')}. Our branches are located in Nairobi, including ${branchList}.`,
         '',
         'Please confirm your specific plan\'s eligibility and any preauthorization requirements directly with the hospital before your visit.',
     ].join('\n');
@@ -403,6 +425,8 @@ function formatAllDepartments() {
         '🏥 *Hospital Departments*',
         '',
         ...Object.entries(exports.hospitalKnowledge.departments).map(([department, description]) => `• *${department}*: ${description}`),
+        '',
+        `Standard outpatient consultation fee: *${exports.hospitalKnowledge.consultationFee}* (applies to clinical departments; Pharmacy and Laboratory are charged per item/test instead).`,
     ].join('\n');
 }
 function formatDepartment(department, description) {
@@ -410,7 +434,10 @@ function formatDepartment(department, description) {
     if (department === 'Emergency') {
         lines.push('', '*Reach us directly for emergencies:*', ...exports.hospitalKnowledge.locations.map((location) => `• ${location.branch}: ${location.phoneNumbers.join(', ')}`));
     }
-    lines.push('', 'Please contact the hospital branch for current availability, appointments, and clinician schedules.');
+    if (!NON_CONSULTATION_DEPARTMENTS.has(department)) {
+        lines.push('', `💵 Standard consultation fee: *${exports.hospitalKnowledge.consultationFee}*. Surgical or theatre procedures in this department are priced separately — ask me for a specific procedure name for its price.`);
+    }
+    lines.push('', 'Please contact the hospital branch for current availability, appointments, and clinician schedules, or reply "book appointment" to schedule with me now.');
     return lines.join('\n');
 }
 function formatLeadership() {
@@ -426,6 +453,7 @@ function formatSpecialistClinics() {
         '',
         ...exports.hospitalKnowledge.specialistClinics.map((clinic) => `• ${clinic}`),
         '',
+        `Standard outpatient consultation fee: *${exports.hospitalKnowledge.consultationFee}*.`,
         'Doctor names and individual schedules were not provided. Please contact the hospital branch for current clinic availability.',
     ].join('\n');
 }
@@ -433,7 +461,7 @@ function formatBooking() {
     return [
         '📅 *Booking / Appointments*',
         '',
-        'To book a consultation, clinic visit, or procedure, please contact your nearest branch directly:',
+        'To book a consultation, clinic visit, or procedure, please contact your nearest branch directly, or just reply "book appointment" and I can take your details right here:',
         '',
         ...exports.hospitalKnowledge.locations.map((location) => `• *${location.branch}*: ${location.phoneNumbers.join(', ')}`),
         '',
@@ -468,6 +496,25 @@ function formatUnknown(topicHint) {
         .filter(Boolean)
         .join('\n');
 }
+/**
+ * Full surgical/theatre procedure price list, for patients who explicitly
+ * ask for "the price list" / "all prices" rather than a specific
+ * procedure. Complements `formatPrices`, which narrows to a specific
+ * procedure when one is named.
+ */
+function formatFullPriceList() {
+    return [
+        '💰 *Full Procedure Price List*',
+        '',
+        `Standard outpatient consultation fee: *${exports.hospitalKnowledge.consultationFee}* (applies hospital-wide for a routine doctor visit).`,
+        '',
+        '*Surgical / theatre procedure prices:*',
+        ...exports.hospitalKnowledge.surgicalPrices.map((item) => `• ${item.procedure}: *${item.price}*`),
+        '',
+        'Prices should be confirmed with the hospital before booking.',
+        'Final procedure charges may depend on the surgeon, anesthesia, medicines, investigations, implants, admission duration, and emergency status.',
+    ].join('\n');
+}
 // ---------------------------------------------------------------------------
 // Matching helpers
 // ---------------------------------------------------------------------------
@@ -492,7 +539,9 @@ function formatPrices(expandedQuery) {
         return [
             '💰 *Procedure Prices*',
             '',
-            'Please send the procedure name you want to enquire about.',
+            `Standard outpatient consultation fee: *${exports.hospitalKnowledge.consultationFee}*.`,
+            '',
+            'For a surgical/theatre procedure price, please send the procedure name, or reply "price list" to see every procedure price at once.',
             '',
             'Examples:',
             '• Caesarean section price',
@@ -500,7 +549,7 @@ function formatPrices(expandedQuery) {
             '• Appendicectomy price',
             '• Tonsillectomy fee',
             '',
-            'Note: only surgical/theatre procedure prices are listed here. Consultation fees, lab test prices, and pharmacy costs were not supplied — please confirm those directly with the hospital.',
+            'Note: only surgical/theatre procedure prices are itemized here. Individual lab test and pharmacy item prices were not supplied — please confirm those directly with the hospital.',
             '',
             'Prices should be confirmed with the hospital before booking.',
         ].join('\n');
@@ -512,7 +561,7 @@ function formatPrices(expandedQuery) {
         '',
         ...displayedMatches.map((item) => `• ${item.procedure}: *${item.price}*`),
         hasMoreMatches
-            ? `\nI found ${matches.length} related procedures. Please send a more specific procedure name for a narrower result.`
+            ? `\nI found ${matches.length} related procedures. Please send a more specific procedure name for a narrower result, or reply "price list" to see all of them.`
             : '',
         '',
         'Prices should be confirmed with the hospital before booking.',
@@ -628,7 +677,8 @@ function formatServiceConfirmation(matches) {
         '',
         ...matches.map((service) => `• ${service}`),
         '',
-        'Please contact the hospital branch to check current availability and book.',
+        `Standard outpatient consultation fee: *${exports.hospitalKnowledge.consultationFee}*. Specific procedure prices are available on request — just tell me the procedure name, or reply "price list" for all of them.`,
+        'Please contact the hospital branch to check current availability and book, or reply "book appointment" to schedule with me now.',
     ].join('\n');
 }
 /** Finds insurer names (from the accepted list) mentioned directly in the query. */
@@ -724,7 +774,21 @@ function searchKnowledgeBase(query) {
     ])) {
         return formatBooking();
     }
-    // 5. Procedure prices — explicit price language OR a direct procedure-name hit.
+    // 5. Full price list — explicit "give me everything" request, checked
+    // before the narrower single-procedure price lookup below.
+    if (includesAny(expandedQuery, [
+        'price list',
+        'full price',
+        'prices list',
+        'complete price',
+        'every price',
+        'all prices',
+        'all your prices',
+        'all procedure prices',
+    ])) {
+        return formatFullPriceList();
+    }
+    // 6. Procedure prices — explicit price language OR a direct procedure-name hit.
     const procedureMatches = findMatchingProcedures(expandedQuery);
     if (includesAny(expandedQuery, [
         'price',
@@ -743,19 +807,18 @@ function searchKnowledgeBase(query) {
         procedureMatches.length > 0) {
         return formatPrices(expandedQuery);
     }
-    // 6. Department match (most specific, detailed answer).
+    // 7. Department match (most specific, detailed answer).
     const matchingDepartment = findMatchingDepartment(expandedQuery);
     if (matchingDepartment) {
         const [department, description] = matchingDepartment;
         return formatDepartment(department, description);
     }
-    // 7. Specific service confirmation (e.g. "do you have physiotherapy?").
+    // 8. Specific service confirmation (e.g. "do you have physiotherapy?").
     const matchingServices = findMatchingServices(expandedQuery);
-    if (matchingServices.length &&
-        !includesAny(expandedQuery, ['service', 'services', 'offer', 'offers', 'offering'])) {
+    if (matchingServices.length) {
         return formatServiceConfirmation(matchingServices);
     }
-    // 8. Doctor / specialist / general appointment-availability questions.
+    // 9. Doctor / specialist / general appointment-availability questions.
     if (includesAny(expandedQuery, [
         'doctor',
         'doctors',
@@ -771,29 +834,37 @@ function searchKnowledgeBase(query) {
         'appointments',
         'clinic hours',
         'clinic time',
+        'operating hours',
+        'opening hours',
+        'when are you open',
+        'when do you open',
+        'when is the clinic open',
     ])) {
         return formatSpecialistClinics();
     }
-    // 9. Generic department listing.
+    // 10. Generic department listing.
     if (includesAny(expandedQuery, ['department', 'departments'])) {
         return formatAllDepartments();
     }
-    // 10. Generic services listing.
+    // 11. Generic services listing. By this point `matchingServices` reflects
+    // real, specific term overlap (generic words like "service"/"all"/"list"
+    // are excluded from matching — see STOP_WORDS), so an empty result here
+    // means the request was genuinely broad and should get the full list.
     if (includesAny(expandedQuery, [
-        'service',
-        'services',
-        'treatment',
-        'treatments',
-        'offer',
-        'offers',
-        'offering',
-        'facility',
-        'facilities',
         'what do you offer',
-    ])) {
+        'what services',
+        'services do you have',
+        'services you offer',
+        'what is available',
+        'what can you help me with',
+        'what treatments do you have',
+        'what departments do you have',
+        'which services do you provide',
+    ]) ||
+        matchingServices.length) {
         return matchingServices.length ? formatServiceConfirmation(matchingServices) : formatServices();
     }
-    // 11. Leadership.
+    // 12. Leadership.
     if (includesAny(expandedQuery, [
         'ceo',
         'administrator',
@@ -804,7 +875,7 @@ function searchKnowledgeBase(query) {
     ])) {
         return formatLeadership();
     }
-    // 12. About / mission / values / general hospital info.
+    // 13. About / mission / values / general hospital info.
     if (includesAny(expandedQuery, [
         'mission',
         'value',
@@ -832,9 +903,12 @@ function getHospitalSummary() {
         '• Locations and contacts (e.g. "Nasra branch contact")',
         '• Services and departments (e.g. "do you have physiotherapy?")',
         '• Insurance partners (e.g. "do you accept Britam?")',
-        '• Surgical procedure prices (e.g. "cost of a caesarean section")',
+        '• Surgical procedure prices (e.g. "cost of a caesarean section") or "price list" for all of them',
+        '• Consultation fees',
         '• Specialist clinics',
         '• Booking an appointment',
         '• Mission, values, and hospital leadership',
+        '',
+        'If you\'re feeling unwell or need medical advice, just tell me and I\'ll connect you directly with our clinical team.',
     ].join('\n');
 }

@@ -212,7 +212,6 @@ app.get('/health', async (_req, res) => {
    DAILY APPOINTMENT REMINDERS
    ========================================================= */
 const reminderWindowMinutes = [720, 360, 60];
-const reminderDispatchState = new Map();
 function formatAppointmentDateTime(date) {
     const dateString = date.toLocaleDateString('en-KE', {
         timeZone: CRON_TIMEZONE,
@@ -238,7 +237,7 @@ async function dispatchAppointmentReminders() {
     const upcomingWindowEnd = new Date(now.getTime() + 14 * 60 * 60 * 1000);
     const appointments = await prisma_1.prisma.appointment.findMany({
         where: {
-            status: 'CONFIRMED',
+            status: { in: ['CONFIRMED', 'RESCHEDULED'] },
             slotTime: {
                 gte: upcomingWindowStart,
                 lte: upcomingWindowEnd,
@@ -250,9 +249,6 @@ async function dispatchAppointmentReminders() {
     });
     for (const appointment of appointments) {
         const patientPhone = appointment.patient?.phoneNumber?.trim();
-        if (!patientPhone) {
-            continue;
-        }
         const diffMinutes = (appointment.slotTime.getTime() - now.getTime()) / 60000;
         for (const reminderMinutes of reminderWindowMinutes) {
             if (diffMinutes <= 0 || diffMinutes < reminderMinutes - 20) {
@@ -263,8 +259,14 @@ async function dispatchAppointmentReminders() {
                 continue;
             }
             const key = `${appointment.id}:${reminderMinutes}`;
-            const seen = reminderDispatchState.get(appointment.id) ?? new Set();
-            if (seen.has(reminderMinutes)) {
+            const existingDelivery = await prisma_1.prisma.reminderDelivery.findFirst({
+                where: {
+                    appointmentId: appointment.id,
+                    kind: `${reminderMinutes}m`,
+                    recipientType: 'PATIENT',
+                },
+            });
+            if (existingDelivery || !patientPhone) {
                 continue;
             }
             const { date, time } = formatAppointmentDateTime(appointment.slotTime);
@@ -289,8 +291,13 @@ async function dispatchAppointmentReminders() {
                     recipientPhone: patientPhone,
                     messageText: reminderMessage,
                 });
-                seen.add(reminderMinutes);
-                reminderDispatchState.set(appointment.id, seen);
+                await prisma_1.prisma.reminderDelivery.create({
+                    data: {
+                        appointmentId: appointment.id,
+                        kind: `${reminderMinutes}m`,
+                        recipientType: 'PATIENT',
+                    },
+                });
                 console.info('[Cron Job] Appointment reminder sent.', {
                     appointmentId: appointment.id,
                     patientId: appointment.patientId,
@@ -327,10 +334,35 @@ async function dispatchAppointmentReminders() {
             }
             void key;
         }
+        const adminReminderMinutes = 20;
+        if (diffMinutes > 0 && diffMinutes >= adminReminderMinutes - 20 && diffMinutes <= adminReminderMinutes + 20) {
+            const existingAdminDelivery = await prisma_1.prisma.reminderDelivery.findFirst({
+                where: {
+                    appointmentId: appointment.id,
+                    kind: '20m',
+                    recipientType: 'ADMIN',
+                },
+            });
+            if (!existingAdminDelivery) {
+                await prisma_1.prisma.reminderDelivery.create({
+                    data: {
+                        appointmentId: appointment.id,
+                        kind: '20m',
+                        recipientType: 'ADMIN',
+                    },
+                });
+                console.info('[Cron Job] Admin booking reminder queued.', {
+                    appointmentId: appointment.id,
+                    patientId: appointment.patientId,
+                    reminderMinutes: adminReminderMinutes,
+                });
+            }
+        }
     }
 }
 /**
- * Runs every 15 minutes to send 12h, 6h, and 1h reminders.
+ * Runs every 15 minutes to send patient reminders and queue the 20-minute
+ * admin booking reminder. Delivery keys are persisted in the database.
  */
 node_cron_1.default.schedule('*/15 * * * *', async () => {
     console.info('[Cron Job] Checking appointment reminders.');
